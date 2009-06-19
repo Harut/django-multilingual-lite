@@ -8,48 +8,51 @@ from django.utils.translation import get_language, ugettext_lazy as _
 from django.utils.functional import curry
 from django.db.models.base import ModelBase
 
-class PublishManager(models.Manager):
-    """
-        Includes only objects marked as publish on current
-    """
-    def get_query_set(self):
-        name = get_language() + '_publish'
-        return super(PublishManager, self).get_query_set().filter(**{str(name): True})
+def create_pb_manager(superclass):
+    class PublishManager(models.Manager):
+        """
+            Includes only objects marked as publish on current
+        """
+        def get_query_set(self):
+            name = get_language() + '_publish'
+            return super(PublishManager, self).get_query_set().filter(**{str(name): True})
+    return PublishManager()
 
-class MultilingualManager(models.Manager):
-    """
-        Translates multilingual filter kwargs
-    """
-    
-    def _translate(self, **kwargs):
-        if hasattr(self.model, 'trans_fields'):
-            for key in kwargs.keys():
-                if key in self.model.trans_fields:
-                    kwargs[str(get_language() + '_' + key)] = kwargs.pop(key)
-        return kwargs
-
-    def filter(self, **kwargs):
-        return super(MultilingualManager, self).filter(**self._translate(**kwargs))
-
-    def exclude(self, **kwargs):
-        return super(MultilingualManager, self).exclude(**self._translate(**kwargs))
-
-    def create(self, **kwargs):
-        from django.conf import settings
-        langs = [x[0] for x in settings.LANGUAGES]
-        lang = get_language()
-        langs = dict((l, 1) for l in langs)
-
-        if hasattr(self.model, 'trans_fields'):
-            for key in kwargs.keys():
-                if key in self.model.trans_fields:
-                    val = kwargs.pop(key)
-                    for l in langs:
-                        if not langs.has_key(l + '_' + key):
-                            kwargs[l + '_' + key] = val
+def create_ml_manager(superclass):
+    class MultilingualManager(superclass):
+        """
+            Translates multilingual filter kwargs
+        """
         
-        return super(MultilingualManager, self).create(**kwargs)
-
+        def _translate(self, **kwargs):
+            if hasattr(self.model, 'trans_fields'):
+                for key in kwargs.keys():
+                    if key in self.model.trans_fields:
+                        kwargs[str(get_language() + '_' + key)] = kwargs.pop(key)
+            return kwargs
+    
+        def filter(self, **kwargs):
+            return super(MultilingualManager, self).filter(**self._translate(**kwargs))
+    
+        def exclude(self, **kwargs):
+            return super(MultilingualManager, self).exclude(**self._translate(**kwargs))
+    
+        def create(self, **kwargs):
+            from django.conf import settings
+            langs = [x[0] for x in settings.LANGUAGES]
+            lang = get_language()
+            langs = dict((l, 1) for l in langs)
+    
+            if hasattr(self.model, 'trans_fields'):
+                for key in kwargs.keys():
+                    if key in self.model.trans_fields:
+                        val = kwargs.pop(key)
+                        for l in langs:
+                            if not langs.has_key(l + '_' + key):
+                                kwargs[l + '_' + key] = val
+            
+            return super(MultilingualManager, self).create(**kwargs)
+    return MultilingualManager()
 
 class MultilingualMetaclass(models.base.ModelBase):
     """
@@ -74,9 +77,11 @@ class MultilingualMetaclass(models.base.ModelBase):
         trans_fields = attrs.get('trans_fields', None)
 
         if trans_fields is not None:
-            attrs['objects'] =   MultilingualManager()
+            # криво! Нужно переписать
+            manager = attrs.get('objects', models.Manager()).__class__
+            attrs['objects'] = create_ml_manager(manager)
             if 'publish' in trans_fields: 
-                attrs['published'] = PublishManager()
+                attrs['published'] = create_pb_manager(manager)
         
         cls = super(MultilingualMetaclass, cls).__new__(cls, name, bases, attrs)
         
