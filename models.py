@@ -8,6 +8,8 @@ from django.utils.translation import get_language, ugettext_lazy as _
 from django.utils.functional import curry
 from django.db.models.base import ModelBase
 
+from django.conf import settings
+
 def create_pb_manager(superclass):
     class PublishManager(models.Manager):
         """
@@ -31,11 +33,11 @@ def create_ml_manager(superclass):
                         kwargs[str(get_language() + '_' + key)] = kwargs.pop(key)
             return kwargs
     
-        def filter(self, **kwargs):
-            return super(MultilingualManager, self).filter(**self._translate(**kwargs))
+        def filter(self, *args, **kwargs):
+            return super(MultilingualManager, self).filter(*args, **self._translate(**kwargs))
     
-        def exclude(self, **kwargs):
-            return super(MultilingualManager, self).exclude(**self._translate(**kwargs))
+        def exclude(self, *args,  **kwargs):
+            return super(MultilingualManager, self).exclude(*args, **self._translate(**kwargs))
     
         def create(self, **kwargs):
             from django.conf import settings
@@ -74,6 +76,7 @@ class MultilingualMetaclass(models.base.ModelBase):
     
     def __new__(cls, name, bases, attrs):
         languages = attrs.get('multilingual_languages', ('ru', 'en'))
+        attrs['multilingual_languages'] = languages
         trans_fields = attrs.get('trans_fields', None)
 
         if trans_fields is not None:
@@ -116,7 +119,7 @@ class MultilingualMetaclass(models.base.ModelBase):
                 )
         return cls
         
-
+REPLICATE = getattr(settings, 'REPLICATE_MULTILINGUAL', False)
 
 class MultilingualBase(models.Model):
     """
@@ -132,6 +135,21 @@ class MultilingualBase(models.Model):
     """
     
     __metaclass__ = MultilingualMetaclass
+    
+    def save(self, *args, **kwargs):
+        if REPLICATE:
+            for field in self.trans_fields:
+                zero, not_zero = [], None
+                for lang in self.multilingual_languages:
+                    value = getattr(self, "%s_%s" % (lang, field))
+                    if not value:
+                        zero.append(lang)
+                    elif not_zero is None:
+                        not_zero = value
+                if not_zero is not None and zero:
+                    for lang in zero:
+                        setattr(self, u"%s_%s" % (lang, field), not_zero)
+        return super(MultilingualBase, self).save(*args, **kwargs)
 
     class Meta:
         abstract = True
